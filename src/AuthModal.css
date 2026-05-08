@@ -1,0 +1,227 @@
+.auth-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1100; /* Stays above navbar and product details */
+  padding: 20px;
+}
+
+.auth-modal-content {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  max-width: 450px;
+  width: 100%;
+  position: relative;
+  text-align: center;
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.auth-close-btn {
+  position: absolute;
+  top: 15px;
+  right: 20px;
+  background: none;
+  border: none;
+  font-size: 20px;
+  font-weight: bold;
+  color: #333;
+  cursor: pointer;
+}
+
+.auth-role-select h2, .auth-form-container h2 {
+  color: #005f73;
+  margin-bottom: 25px;
+}
+
+.login-options {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.toggle-auth-text {
+  font-size: 14px;
+  color: #666;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #005f73;
+  font-weight: bold;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.link-btn:hover {
+  color: #0a9396;
+}
+
+.auth-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Role Selection Buttons */
+.login-options {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin: 20px 0;
+}
+
+.buyer-login-btn,
+.seller-login-btn {
+  width: 100%;
+  padding: 15px 20px;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.buyer-login-btn {
+  background: linear-gradient(135deg, #2a9d8f, #238b7e);
+  color: white;
+  box-shadow: 0 4px 15px rgba(42, 157, 143, 0.3);
+}
+
+.buyer-login-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(42, 157, 143, 0.4);
+  background: linear-gradient(135deg, #238b7e, #1e7569);
+}
+
+.seller-login-btn {
+  background: linear-gradient(135deg, #e76f51, #e25831);
+  color: white;
+  box-shadow: 0 4px 15px rgba(231, 111, 81, 0.3);
+}
+
+.seller-login-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(231, 111, 81, 0.4);
+  background: linear-gradient(135deg, #e25831, #d44a24);
+}
+
+.buyer-login-btn:active,
+.seller-login-btn:active {
+  transform: translateY(0);
+}
+
+/* Toggle Auth Text */
+.toggle-auth-text {
+  text-align: center;
+  margin-top: 20px;
+  color: #666;
+  font-size: 14px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #2a9d8f;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 0.2s ease;
+}
+
+.link-btn:hover {
+  color: #1e7569;
+}
+
+/* Auth Modal Footer */
+.auth-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #eee;
+}
+
+.back-btn {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+.back-btn:hover {
+  background: #5a6268;
+}
+
+/* Auth Form Container */
+.auth-form-container {
+  padding: 10px 0;
+}
+
+.auth-form-container h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+/* Auth Modal Content */
+.auth-modal-content {
+  background: white;
+  border-radius: 16px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+  padding: 25px;
+}
+
+.auth-close-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+  transition: color 0.2s ease;
+}
+
+.auth-close-btn:hover {
+  color: #333;
+}
+
+/* Auth Role Select */
+.auth-role-select {
+  text-align: center;
+}
+
+.auth-role-select h2 {
+  margin-bottom: 20px;
+  color: #333;
+}

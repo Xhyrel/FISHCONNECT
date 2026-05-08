@@ -1,0 +1,6 @@
+*.backup
+fishconnect-backend/uploads/
+fishconnect-backend/.env
+node_modules/
+my-backup/
+.DS_Store
