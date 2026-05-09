@@ -779,74 +779,91 @@ const handleAddProduct = async (e) => {
     }
   };
 
-  const handlePlaceOrder = async (e, orderData) => {
-    e.preventDefault();
-    
-    const paymentMethod = orderData.paymentMethod;
-    
-    // Handle payment proof upload if GCash
-    let paymentProofUrl = null;
-    if (paymentMethod === 'gcash' && paymentProof) {
-      // Upload payment proof
+const handlePlaceOrder = async (e, orderData) => {
+  e.preventDefault();
+  
+  const paymentMethod = orderData.paymentMethod;
+  
+  // Handle payment proof upload if GCash
+  let paymentProofUrl = null;
+  if (paymentMethod === 'gcash' && paymentProof) {
+    try {
       const formData = new FormData();
       formData.append('payment_proof', paymentProof);
-      formData.append('order_id', 'temp');
       
-      try {
-        const uploadResponse = await fetch(`${API_URL}/upload-payment-proof`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          },
-          body: formData
-        });
-        
-        if (uploadResponse.ok) {
-          const uploadData = await uploadResponse.json();
-          paymentProofUrl = uploadData.file_url;
-        }
-      } catch (error) {
-        console.error("Error uploading payment proof:", error);
-      }
-    }
-    
-    const newOrderData = {
-      items: cart.map(item => ({
-        product_id: item.id,
-        quantity_kg: item.quantity,
-        subtotal: item.price * item.quantity
-      })),
-      recipient_name: orderData.recipientName,
-      mobile_number: orderData.mobileNumber,
-      shipping_address: orderData.address,
-      payment_method: paymentMethod,
-      payment_proof: paymentProofUrl,
-      total_amount: calculateTotal()
-    };
-    
-    try {
-      await createOrder(newOrderData);
-      
-      // Update local product stock
-      const updatedProducts = products.map(prod => {
-        const cartItem = cart.find(c => c.id === prod.id);
-        if (cartItem) {
-          return { ...prod, stock: Math.max(0, prod.stock - cartItem.quantity) };
-        }
-        return prod;
+      const token = localStorage.getItem('token');
+      const uploadResponse = await fetch(`${API_URL}/upload-payment-proof`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
       });
       
-      setProducts(updatedProducts);
-      setCart([]);
-      setPaymentProof(null);
-      setPaymentProofPreview(null);
-      
-      alert(`Order placed successfully!`);
-      setView('orders');
+      if (uploadResponse.ok) {
+        const uploadData = await uploadResponse.json();
+        paymentProofUrl = uploadData.file_url;
+        console.log('Payment proof uploaded:', paymentProofUrl);
+      } else {
+        console.error('Upload failed:', await uploadResponse.text());
+      }
     } catch (error) {
-      alert("Failed to place order. Please try again.");
+      console.error("Error uploading payment proof:", error);
     }
+  }
+  
+  const newOrderData = {
+    items: cart.map(item => ({
+      product_id: item.id,
+      quantity_kg: item.quantity,
+      subtotal: item.price * item.quantity
+    })),
+    recipient_name: orderData.recipientName,
+    mobile_number: orderData.mobileNumber,
+    shipping_address: orderData.address,
+    payment_method: paymentMethod,
+    payment_proof: paymentProofUrl, // This should be saved
+    total_amount: calculateTotal()
   };
+  
+  console.log('Sending order data:', newOrderData);
+  
+  try {
+    const response = await fetch(`${API_URL}/orders`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(newOrderData)
+    });
+    
+    const data = await response.json();
+    console.log('Order response:', data);
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to create order');
+    }
+    
+    // Update local product stock
+    const updatedProducts = products.map(prod => {
+      const cartItem = cart.find(c => c.id === prod.id);
+      if (cartItem) {
+        return { ...prod, stock: Math.max(0, prod.stock - cartItem.quantity) };
+      }
+      return prod;
+    });
+    
+    setProducts(updatedProducts);
+    setCart([]);
+    setPaymentProof(null);
+    setPaymentProofPreview(null);
+    
+    alert(`Order placed successfully!`);
+    setView('orders');
+    await fetchOrders(); // Refresh orders
+  } catch (error) {
+    console.error("Error placing order:", error);
+    alert("Failed to place order. Please try again.");
+  }
+};
 
   const handleConfirmPayment = async (orderId) => {
     await updateOrderStatus(orderId, 'pending_confirmation', 'Payment verified. Waiting for vendor confirmation.');
@@ -958,8 +975,12 @@ const handleAddProduct = async (e) => {
           <span className="dropdown-arrow">▼</span>
         </button>
         {showProfileMenu && (
-          <div className="dropdown-menu">
-            <button onClick={handleLogout} className="dropdown-item logout-item">
+           <div className="dropdown-menu">
+            <button 
+              onClick={handleLogout} 
+              className="dropdown-item logout-item"
+              style={{ color: '#000000', backgroundColor: 'transparent' }}
+            >
               🚪 Logout
             </button>
           </div>

@@ -1278,7 +1278,8 @@ body { background-color: #f4f7f6; color: #333; display: flex; flex-direction: co
 }
 
 .nav-links button:hover {
-  background: #f0f0f0;
+  background: #2a9d8f;
+  color: white;
 }
 
 .login-btn {
