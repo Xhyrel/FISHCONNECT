@@ -11,17 +11,16 @@ const app = express();
 const PORT = 5000;
 const JWT_SECRET = 'fishconnect_secret_key_2024';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use('/uploads', express.static('uploads'));
-// Update your CORS middleware (replace the existing app.use(cors()))
+// CORS middleware - SINGLE CONFIGURATION (FIXED)
 app.use(cors({
-  origin: 'http://localhost:5173', // Your React app URL
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
+
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
 
 // Ensure uploads directory exists
 const uploadsDir = './uploads';
@@ -43,7 +42,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -66,7 +65,6 @@ const pool = mysql.createPool({
   connectionLimit: 10
 });
 
-// Test connection
 async function testConnection() {
   try {
     const connection = await pool.getConnection();
@@ -95,20 +93,16 @@ const authenticateToken = (req, res, next) => {
 };
 
 // ========== AUTH ROUTES ==========
-
-// Register
 app.post('/api/auth/register', async (req, res) => {
   console.log('Registration attempt:', req.body.username);
   
   try {
     const { first_name, middle_name, last_name, mobile, address, email, username, password, role } = req.body;
     
-    // Validate required fields
     if (!first_name || !last_name || !mobile || !address || !email || !username || !password || !role) {
       return res.status(400).json({ error: 'All fields except middle name are required' });
     }
     
-    // Check if user exists
     const [existing] = await pool.query(
       'SELECT id FROM users WHERE email = ? OR username = ?',
       [email, username]
@@ -118,20 +112,15 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Email or username already exists' });
     }
     
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Handle middle_name
     const middleNameValue = (middle_name && middle_name.trim() !== '') ? middle_name.trim() : null;
     
-    // Insert user
     const [result] = await pool.query(
       `INSERT INTO users (first_name, middle_name, last_name, mobile, address, email, username, password, role) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [first_name, middleNameValue, last_name, mobile, address, email, username, hashedPassword, role]
     );
     
-    // Create token
     const token = jwt.sign(
       { id: result.insertId, username, role },
       JWT_SECRET,
@@ -149,7 +138,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Login
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   
@@ -185,7 +173,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Get current user
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.query(
@@ -203,10 +190,6 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 });
 
 // ========== PRODUCT ROUTES ==========
-
-// Get all products
-// Get all products - UPDATED to parse image URLs
-// Get all products - FIXED for TEXT column
 app.get('/api/products', async (req, res) => {
   console.log('Fetching products...');
   
@@ -221,16 +204,10 @@ app.get('/api/products', async (req, res) => {
       ORDER BY p.id DESC
     `);
     
-    console.log(`Found ${products.length} products`);
-    
-    // Format products and handle image URLs
     const formattedProducts = products.map(product => {
       let images = [];
-      
-      // Handle image_url - could be JSON array or single URL
       if (product.image_url) {
         try {
-          // Try to parse as JSON
           const parsed = JSON.parse(product.image_url);
           if (Array.isArray(parsed)) {
             images = parsed;
@@ -238,12 +215,9 @@ app.get('/api/products', async (req, res) => {
             images = [product.image_url];
           }
         } catch (e) {
-          // Not JSON, treat as single URL
           images = [product.image_url];
         }
       }
-      
-      // If no images, use placeholder
       if (images.length === 0) {
         images = ['https://via.placeholder.com/300x200?text=No+Image'];
       }
@@ -270,63 +244,83 @@ app.get('/api/products', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch products: ' + error.message });
   }
 });
-// Add product (Seller only)
-// Add product (Seller only) - UPDATED to handle multiple images
-// Add product - FIXED for TEXT column
+
+// ADD PRODUCT - FIXED VERSION
 app.post('/api/products', authenticateToken, upload.array('images', 5), async (req, res) => {
-  console.log('Product addition request received');
-  console.log('Files:', req.files ? req.files.length : 0);
+  console.log('🔵 PRODUCT ADD REQUEST RECEIVED');
+  console.log('Files count:', req.files ? req.files.length : 0);
+  console.log('Body:', req.body);
   
   try {
+    // Check if user is seller
     if (req.user.role !== 'seller') {
       return res.status(403).json({ error: 'Only sellers can add products' });
     }
     
     const { name, price, stock_kg, category, description } = req.body;
     
+    // Validate required fields
     if (!name || !price || !stock_kg || !category) {
       return res.status(400).json({ error: 'Name, price, stock, and category are required' });
     }
     
+    // Check if images were uploaded
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'At least one product image is required' });
     }
     
-    // Store ALL image URLs as JSON array string
+    // Save image URLs
     const imageUrls = req.files.map(file => `/uploads/${file.filename}`);
     const imageUrlsJson = JSON.stringify(imageUrls);
     
-    console.log('Saving images:', imageUrlsJson);
+    console.log('Saving product:', { name, price, stock_kg, category, images: imageUrlsJson });
     
+    // Insert into database
     const [result] = await pool.query(
       `INSERT INTO products (vendor_id, name, category, price, stock_kg, description, image_url, is_available) 
        VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       [req.user.id, name, category, price, stock_kg, description || null, imageUrlsJson]
     );
     
-    console.log('Product added successfully, ID:', result.insertId);
-    res.json({ id: result.insertId, message: 'Product added successfully', images: imageUrls });
+    console.log('✅ Product added, ID:', result.insertId);
+    
+    res.status(201).json({ 
+      success: true,
+      id: result.insertId, 
+      message: 'Product added successfully', 
+      images: imageUrls 
+    });
     
   } catch (error) {
-    console.error('Error adding product:', error);
+    console.error('❌ Error adding product:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ========== ORDER ROUTES ==========
+// UPLOAD PAYMENT PROOF - ADD THIS ENDPOINT
+app.post('/api/upload-payment-proof', authenticateToken, upload.single('payment_proof'), async (req, res) => {
+  console.log('💰 Payment proof upload received');
+  console.log('File:', req.file);
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  const fileUrl = `/uploads/${req.file.filename}`;
+  console.log('✅ File saved at:', fileUrl);
+  res.json({ file_url: fileUrl });
+});
 
-// Create order
-// Create order - UPDATED to get vendor_id from product
+// ========== ORDER ROUTES ==========
 app.post('/api/orders', authenticateToken, async (req, res) => {
   console.log('Order creation request:', req.body);
   
-  const { items, recipient_name, mobile_number, shipping_address, payment_method, total_amount } = req.body;
+  const { items, recipient_name, mobile_number, shipping_address, payment_method, payment_proof, total_amount } = req.body;
   
   const connection = await pool.getConnection();
   await connection.beginTransaction();
   
   try {
-    // Get vendor_id from the first product's vendor
     const [productInfo] = await connection.query(
       'SELECT vendor_id FROM products WHERE id = ?',
       [items[0].product_id]
@@ -338,40 +332,40 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     
     const vendor_id = productInfo[0].vendor_id;
     const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const orderStatus = payment_method === 'gcash' ? 'waiting_verification' : 'pending_confirmation';
     
-    // Create order
     const [orderResult] = await connection.query(
       `INSERT INTO orders (order_number, buyer_id, vendor_id, recipient_name, mobile_number, shipping_address, 
-       total_amount, payment_method, status, order_date) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_confirmation', NOW())`,
-      [orderNumber, req.user.id, vendor_id, recipient_name, mobile_number, shipping_address, total_amount, payment_method]
+       total_amount, payment_method, payment_proof, status, order_date) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [orderNumber, req.user.id, vendor_id, recipient_name, mobile_number, shipping_address, total_amount, payment_method, payment_proof || null, orderStatus]
     );
     
     const orderId = orderResult.insertId;
     
-    // Add order items and update stock
     for (const item of items) {
       await connection.query(
         'INSERT INTO order_items (order_id, product_id, quantity_kg, subtotal) VALUES (?, ?, ?, ?)',
         [orderId, item.product_id, item.quantity_kg, item.subtotal]
       );
       
-      // Update product stock
       await connection.query(
         'UPDATE products SET stock_kg = stock_kg - ? WHERE id = ?',
         [item.quantity_kg, item.product_id]
       );
     }
     
-    // Add tracking history
+    const trackingDesc = payment_method === 'gcash' 
+      ? 'Order placed. Waiting for payment verification.' 
+      : 'Order placed. Waiting for vendor confirmation.';
+    
     await connection.query(
       `INSERT INTO order_tracking (order_id, description, status_reached, update_date) 
-       VALUES (?, ?, 'pending_confirmation', NOW())`,
-      [orderId, 'Order placed. Waiting for vendor confirmation.']
+       VALUES (?, ?, ?, NOW())`,
+      [orderId, trackingDesc, orderStatus]
     );
     
     await connection.commit();
-    console.log('Order created successfully, ID:', orderId);
     res.json({ id: orderId, order_number: orderNumber, message: 'Order created successfully' });
     
   } catch (error) {
@@ -383,9 +377,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
   }
 });
 
-
 // ========== GET ORDERS ROUTE ==========
-// Get user's orders - UPDATED with items and tracking
 app.get('/api/orders', authenticateToken, async (req, res) => {
   console.log('Fetching orders for user:', req.user.id, 'Role:', req.user.role);
   
@@ -393,20 +385,16 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     let orders;
     
     if (req.user.role === 'seller') {
-      // Seller view - orders where they are the vendor
       [orders] = await pool.query(`
         SELECT 
           o.*,
-          CONCAT(b.first_name, ' ', b.last_name) as buyer_name,
-          b.mobile as buyer_mobile,
-          b.address as buyer_address
+          CONCAT(b.first_name, ' ', b.last_name) as buyer_name
         FROM orders o
         JOIN users b ON o.buyer_id = b.id
         WHERE o.vendor_id = ?
         ORDER BY o.order_date DESC
       `, [req.user.id]);
     } else {
-      // Buyer view - orders they placed
       [orders] = await pool.query(`
         SELECT 
           o.*,
@@ -418,31 +406,22 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       `, [req.user.id]);
     }
     
-    // Get order items and tracking for each order
     const ordersWithDetails = await Promise.all(orders.map(async (order) => {
       const [items] = await pool.query(`
-        SELECT 
-          oi.*, 
-          p.name as product_name, 
-          p.image_url,
-          p.price as product_price
+        SELECT oi.*, p.name as product_name, p.price as product_price
         FROM order_items oi
         JOIN products p ON oi.product_id = p.id
         WHERE oi.order_id = ?
       `, [order.id]);
       
       const [tracking] = await pool.query(`
-        SELECT * FROM order_tracking 
-        WHERE order_id = ? 
-        ORDER BY update_date ASC
+        SELECT * FROM order_tracking WHERE order_id = ? ORDER BY update_date ASC
       `, [order.id]);
       
-      // Parse items to match frontend expected format
       const formattedItems = items.map(item => ({
         id: item.product_id,
         name: item.product_name,
         quantity: parseFloat(item.quantity_kg),
-        quantity_kg: parseFloat(item.quantity_kg),
         price: parseFloat(item.product_price),
         subtotal: parseFloat(item.subtotal)
       }));
@@ -460,7 +439,6 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
         paymentProof: order.payment_proof,
         orderDate: order.order_date,
         status: order.status,
-        cancellationReason: order.cancel_reason,
         recipientName: order.recipient_name,
         mobileNumber: order.mobile_number,
         shippingAddress: order.shipping_address,
@@ -475,7 +453,6 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       };
     }));
     
-    console.log(`Found ${ordersWithDetails.length} orders`);
     res.json(ordersWithDetails);
     
   } catch (error) {
@@ -483,8 +460,6 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch orders: ' + error.message });
   }
 });
-
-
 
 // ========== VENDORS ROUTE ==========
 app.get('/api/vendors', async (req, res) => {
@@ -499,60 +474,26 @@ app.get('/api/vendors', async (req, res) => {
   }
 });
 
-// ========== REVIEWS ROUTE - FIXED VERSION ==========
+// ========== REVIEWS ROUTES ==========
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const [reviews] = await pool.query(`
+      SELECT r.*, CONCAT(u.first_name, ' ', u.last_name) as buyer_name
+      FROM reviews r
+      JOIN users u ON r.buyer_id = u.id
+      ORDER BY r.review_date DESC
+    `);
+    res.json(reviews);
+  } catch (error) {
+    console.error('Error fetching reviews:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
-// Add review
 app.post('/api/reviews', authenticateToken, async (req, res) => {
-  console.log('====== REVIEW SUBMISSION ======');
-  console.log('User:', req.user.id, req.user.role);
-  console.log('Request body:', req.body);
-  
   const { order_id, product_id, rating, comment } = req.body;
   
-  // Validate required fields
-  if (!order_id || !product_id || !rating) {
-    return res.status(400).json({ error: 'Order ID, product ID, and rating are required' });
-  }
-  
-  if (rating < 1 || rating > 5) {
-    return res.status(400).json({ error: 'Rating must be between 1 and 5' });
-  }
-  
   try {
-    // First, check if the order exists and belongs to this user
-    const [orders] = await pool.query(
-      'SELECT id, status, buyer_id FROM orders WHERE id = ? AND buyer_id = ?',
-      [order_id, req.user.id]
-    );
-    
-    console.log('Order check result:', orders);
-    
-    if (orders.length === 0) {
-      return res.status(403).json({ error: 'Order not found or you are not the buyer' });
-    }
-    
-    const order = orders[0];
-    
-    // Allow review for delivered orders OR for testing, allow any order
-    if (order.status !== 'delivered') {
-      console.log(`Order status is ${order.status}, not delivered`);
-      // For testing, we can still allow review but log a warning
-      console.warn('Warning: Order is not delivered yet');
-      // Uncomment the line below to require delivered status
-      // return res.status(403).json({ error: 'You can only review products after delivery' });
-    }
-    
-    // Check if product is in this order
-    const [orderItems] = await pool.query(
-      'SELECT id FROM order_items WHERE order_id = ? AND product_id = ?',
-      [order_id, product_id]
-    );
-    
-    if (orderItems.length === 0) {
-      return res.status(403).json({ error: 'This product was not in your order' });
-    }
-    
-    // Check if already reviewed
     const [existing] = await pool.query(
       'SELECT id FROM reviews WHERE order_id = ? AND product_id = ? AND buyer_id = ?',
       [order_id, product_id, req.user.id]
@@ -562,29 +503,13 @@ app.post('/api/reviews', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'You have already reviewed this product' });
     }
     
-    // Insert review
     const [result] = await pool.query(
       `INSERT INTO reviews (order_id, product_id, buyer_id, rating, comment, review_date) 
        VALUES (?, ?, ?, ?, ?, NOW())`,
       [order_id, product_id, req.user.id, rating, comment || null]
     );
     
-    console.log('✅ Review added successfully, ID:', result.insertId);
-    
-    // Update product average rating
-    const [avgRating] = await pool.query(
-      'SELECT AVG(rating) as avg, COUNT(*) as count FROM reviews WHERE product_id = ?',
-      [product_id]
-    );
-    
-    console.log('Updated average rating:', avgRating[0]);
-    
-    res.json({ 
-      id: result.insertId, 
-      message: 'Review added successfully',
-      average_rating: avgRating[0].avg,
-      rating_count: avgRating[0].count
-    });
+    res.json({ success: true, id: result.insertId, message: 'Review added successfully' });
     
   } catch (error) {
     console.error('Error adding review:', error);
@@ -596,7 +521,7 @@ app.post('/api/reviews', authenticateToken, async (req, res) => {
 app.get('/api/wishlist', authenticateToken, async (req, res) => {
   try {
     const [items] = await pool.query(`
-      SELECT w.*, p.name as product_name, p.price, p.image_url
+      SELECT w.*, p.name as product_name, p.price
       FROM wishlist w
       JOIN products p ON w.product_id = p.id
       WHERE w.buyer_id = ?
@@ -636,171 +561,46 @@ app.delete('/api/wishlist/:productId', authenticateToken, async (req, res) => {
   }
 });
 
-// Test endpoint
-app.get('/api/test', async (req, res) => {
-  res.json({ message: 'Database connection OK', timestamp: new Date() });
-});
-
-
-// ========== REVIEWS ROUTES ==========
-
-// GET all reviews
-app.get('/api/reviews', async (req, res) => {
-  console.log('GET /api/reviews - Fetching reviews');
-  try {
-    const [reviews] = await pool.query(`
-      SELECT 
-        r.*, 
-        CONCAT(u.first_name, ' ', u.last_name) as buyer_name,
-        p.name as product_name
-      FROM reviews r
-      JOIN users u ON r.buyer_id = u.id
-      JOIN products p ON r.product_id = p.id
-      ORDER BY r.review_date DESC
-    `);
-    console.log(`Found ${reviews.length} reviews`);
-    res.json(reviews);
-  } catch (error) {
-    console.error('Error fetching reviews:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// POST a new review
-app.post('/api/reviews', authenticateToken, async (req, res) => {
-  console.log('====== POST /api/reviews ======');
-  console.log('User ID:', req.user.id);
-  console.log('Request body:', req.body);
+// ========== DELETE PRODUCT ==========
+app.delete('/api/products/:id', authenticateToken, async (req, res) => {
+  console.log('DELETE request for product:', req.params.id);
   
   try {
-    const { order_id, product_id, rating, comment } = req.body;
-    
-    // Validate required fields
-    if (!order_id || !product_id || !rating) {
-      return res.status(400).json({ 
-        error: 'Missing required fields. Need: order_id, product_id, rating' 
-      });
-    }
-    
-    // Validate rating range
-    if (rating < 1 || rating > 5) {
-      return res.status(400).json({ error: 'Rating must be between 1 and 5' });
-    }
-    
-    // Check if the user actually bought this product in this order
-    const [orderItems] = await pool.query(
-      `SELECT oi.id 
-       FROM order_items oi
-       JOIN orders o ON oi.order_id = o.id
-       WHERE o.id = ? AND o.buyer_id = ? AND oi.product_id = ?`,
-      [order_id, req.user.id, product_id]
-    );
-    
-    console.log('Order items found:', orderItems.length);
-    
-    if (orderItems.length === 0) {
-      return res.status(403).json({ 
-        error: 'You can only review products you have purchased' 
-      });
-    }
-    
-    // Check if already reviewed
-    const [existingReview] = await pool.query(
-      'SELECT id FROM reviews WHERE order_id = ? AND product_id = ? AND buyer_id = ?',
-      [order_id, product_id, req.user.id]
-    );
-    
-    if (existingReview.length > 0) {
-      return res.status(400).json({ error: 'You have already reviewed this product' });
-    }
-    
-    // Insert the review
-    const [result] = await pool.query(
-      `INSERT INTO reviews (order_id, product_id, buyer_id, rating, comment, review_date) 
-       VALUES (?, ?, ?, ?, ?, NOW())`,
-      [order_id, product_id, req.user.id, rating, comment || null]
-    );
-    
-    console.log('✅ Review inserted successfully. ID:', result.insertId);
-    
-    // Update the product's average rating
-    const [avgRating] = await pool.query(
-      'SELECT AVG(rating) as avg, COUNT(*) as count FROM reviews WHERE product_id = ?',
-      [product_id]
-    );
-    
-    res.json({ 
-      success: true, 
-      id: result.insertId,
-      message: 'Review submitted successfully',
-      average_rating: avgRating[0].avg,
-      total_reviews: avgRating[0].count
-    });
-    
-  } catch (error) {
-    console.error('Error in POST /api/reviews:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// DELETE a review (optional, for admins)
-app.delete('/api/reviews/:id', authenticateToken, async (req, res) => {
-  try {
-    // Optional: Check if user is admin or the review owner
-    const [review] = await pool.query(
-      'SELECT buyer_id FROM reviews WHERE id = ?',
+    const [products] = await pool.query(
+      'SELECT id, vendor_id, name FROM products WHERE id = ?',
       [req.params.id]
     );
     
-    if (review.length === 0) {
-      return res.status(404).json({ error: 'Review not found' });
+    if (products.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
     }
     
-    if (review[0].buyer_id !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Not authorized to delete this review' });
+    const product = products[0];
+    
+    if (product.vendor_id !== req.user.id) {
+      return res.status(403).json({ error: 'You can only delete your own products' });
     }
     
-    await pool.query('DELETE FROM reviews WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Review deleted successfully' });
+    await pool.query('DELETE FROM products WHERE id = ?', [req.params.id]);
+    
+    res.json({ success: true, message: `Product "${product.name}" deleted successfully` });
     
   } catch (error) {
-    console.error('Error deleting review:', error);
+    console.error('Delete error:', error);
     res.status(500).json({ error: error.message });
   }
-});
-
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`\n🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📝 API endpoints available:`);
-  console.log(`   POST   /api/auth/register`);
-  console.log(`   POST   /api/auth/login`);
-  console.log(`   GET    /api/auth/me`);
-  console.log(`   GET    /api/products`);
-  console.log(`   POST   /api/products (requires auth & image upload)`);
-  console.log(`   POST   /api/orders (requires auth)`);
-  console.log(`   GET    /api/vendors`);
-  console.log(`   GET    /api/reviews`);
-  console.log(`   GET    /api/wishlist (requires auth)`);
-  console.log(`   POST   /api/wishlist (requires auth)`);
-  console.log(`   DELETE /api/wishlist/:productId (requires auth)`);
-  console.log(`   GET    /api/test\n`);
 });
 
 // ========== UPDATE ORDER STATUS ==========
 app.patch('/api/orders/:id/status', authenticateToken, async (req, res) => {
   const { status, description } = req.body;
   
-  console.log('Updating order status:', req.params.id, 'to:', status);
-  
   const connection = await pool.getConnection();
   await connection.beginTransaction();
   
   try {
-    // Check authorization
     const [orders] = await connection.query(
-      'SELECT vendor_id, buyer_id FROM orders WHERE id = ?',
+      'SELECT vendor_id FROM orders WHERE id = ?',
       [req.params.id]
     );
     
@@ -808,20 +608,12 @@ app.patch('/api/orders/:id/status', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     
-    const order = orders[0];
-    
-    // Only seller can update order status
-    if (req.user.role !== 'seller' || order.vendor_id !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to update this order' });
+    if (orders[0].vendor_id !== req.user.id) {
+      return res.status(403).json({ error: 'Not authorized' });
     }
     
-    // Update order status
-    await connection.query(
-      'UPDATE orders SET status = ? WHERE id = ?',
-      [status, req.params.id]
-    );
+    await connection.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
     
-    // Add tracking entry
     const descriptionText = description || `Order status updated to ${status}`;
     await connection.query(
       `INSERT INTO order_tracking (order_id, description, status_reached, update_date) 
@@ -830,7 +622,6 @@ app.patch('/api/orders/:id/status', authenticateToken, async (req, res) => {
     );
     
     await connection.commit();
-    console.log('Order status updated successfully');
     res.json({ message: 'Order status updated successfully' });
     
   } catch (error) {
@@ -842,19 +633,16 @@ app.patch('/api/orders/:id/status', authenticateToken, async (req, res) => {
   }
 });
 
-
 // ========== CANCEL ORDER ==========
 app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
   const { cancel_reason } = req.body;
-  
-  console.log('Cancelling order:', req.params.id);
   
   const connection = await pool.getConnection();
   await connection.beginTransaction();
   
   try {
     const [orders] = await connection.query(
-      'SELECT buyer_id, vendor_id, status FROM orders WHERE id = ?',
+      'SELECT buyer_id, status FROM orders WHERE id = ?',
       [req.params.id]
     );
     
@@ -864,22 +652,19 @@ app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
     
     const order = orders[0];
     
-    // Only buyer can cancel
     if (req.user.id !== order.buyer_id) {
       return res.status(403).json({ error: 'Only the buyer can cancel the order' });
     }
     
-    if (order.status !== 'pending_confirmation') {
+    if (order.status !== 'pending_confirmation' && order.status !== 'waiting_verification') {
       return res.status(400).json({ error: 'Order cannot be cancelled at this stage' });
     }
     
-    // Update order status
     await connection.query(
       'UPDATE orders SET status = "cancelled", cancel_reason = ? WHERE id = ?',
       [cancel_reason, req.params.id]
     );
     
-    // Restore product stock
     const [items] = await connection.query(
       'SELECT product_id, quantity_kg FROM order_items WHERE order_id = ?',
       [req.params.id]
@@ -892,7 +677,6 @@ app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
       );
     }
     
-    // Add tracking entry
     await connection.query(
       `INSERT INTO order_tracking (order_id, description, status_reached, update_date) 
        VALUES (?, ?, "cancelled", NOW())`,
@@ -900,7 +684,6 @@ app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
     );
     
     await connection.commit();
-    console.log('Order cancelled successfully');
     res.json({ message: 'Order cancelled successfully' });
     
   } catch (error) {
@@ -910,4 +693,33 @@ app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
   } finally {
     connection.release();
   }
+});
+
+// ========== TEST ENDPOINT ==========
+app.get('/api/test', async (req, res) => {
+  res.json({ message: 'Database connection OK', timestamp: new Date() });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`\n🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📝 API endpoints available:`);
+  console.log(`   POST   /api/auth/register`);
+  console.log(`   POST   /api/auth/login`);
+  console.log(`   GET    /api/auth/me`);
+  console.log(`   GET    /api/products`);
+  console.log(`   POST   /api/products (requires auth & image upload)`);
+  console.log(`   POST   /api/upload-payment-proof (requires auth)`);
+  console.log(`   POST   /api/orders (requires auth)`);
+  console.log(`   GET    /api/orders (requires auth)`);
+  console.log(`   PATCH  /api/orders/:id/status (requires auth)`);
+  console.log(`   PATCH  /api/orders/:id/cancel (requires auth)`);
+  console.log(`   GET    /api/vendors`);
+  console.log(`   GET    /api/reviews`);
+  console.log(`   POST   /api/reviews (requires auth)`);
+  console.log(`   GET    /api/wishlist (requires auth)`);
+  console.log(`   POST   /api/wishlist (requires auth)`);
+  console.log(`   DELETE /api/wishlist/:productId (requires auth)`);
+  console.log(`   DELETE /api/products/:id (requires auth)`);
+  console.log(`   GET    /api/test\n`);
 });

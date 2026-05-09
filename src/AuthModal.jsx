@@ -1,4 +1,3 @@
-// AuthModal.jsx - Fixed version with proper data handling
 import React, { useState } from 'react';
 
 function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
@@ -17,6 +16,8 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -30,7 +31,6 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
     setError('');
 
     if (!isLogin) {
-      // Validation for signup
       if (!formData.first_name.trim()) {
         setError('First name is required');
         setLoading(false);
@@ -77,7 +77,6 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
         return;
       }
     } else {
-      // Validation for login
       if (!formData.username.trim()) {
         setError('Username is required');
         setLoading(false);
@@ -99,7 +98,6 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
         password: formData.password
       };
     } else {
-      // Make sure all fields are properly formatted - convert empty strings to null for optional fields
       payload = {
         first_name: formData.first_name.trim(),
         middle_name: formData.middle_name.trim() === '' ? null : formData.middle_name.trim(),
@@ -109,46 +107,45 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
         email: formData.email.trim().toLowerCase(),
         username: formData.username.trim().toLowerCase(),
         password: formData.password,
-        role: formData.role // This should be either 'buyer' or 'seller'
+        role: formData.role
       };
     }
 
-    console.log('Sending payload:', { ...payload, password: '[HIDDEN]' });
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-     try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+      const data = await response.json();
 
-    const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Authentication failed');
+      }
 
-    if (!response.ok) {
-      throw new Error(data.error || 'Authentication failed');
+      onAuthSuccess(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-
-    // Make sure this matches your backend response
-    onAuthSuccess({
-      token: data.token,
-      user: data.user
-    });
-  } catch (err) {
-    console.error('Auth error:', err);
-    setError(err.message);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="close-modal" onClick={onClose}>✕</button>
+    <div className="auth-modal-overlay" onClick={onClose}>
+      <div className="auth-modal-container" onClick={(e) => e.stopPropagation()}>
+        <button className="auth-modal-close" onClick={onClose}>✕</button>
         
+        <div className="auth-modal-header">
+          <div className="auth-logo">🐟 FishConnect</div>
+          <h2>{isLogin ? 'Welcome Back!' : 'Join FishConnect'}</h2>
+          <p>{isLogin ? 'Login to continue shopping' : 'Create an account to start buying fresh seafood'}</p>
+        </div>
+
         <div className="auth-tabs">
           <button 
-            className={isLogin ? 'active' : ''} 
+            className={`auth-tab ${isLogin ? 'active' : ''}`}
             onClick={() => { 
               setIsLogin(true); 
               setError('');
@@ -158,7 +155,7 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
             Login
           </button>
           <button 
-            className={!isLogin ? 'active' : ''} 
+            className={`auth-tab ${!isLogin ? 'active' : ''}`}
             onClick={() => { 
               setIsLogin(false); 
               setError('');
@@ -169,111 +166,190 @@ function AuthModal({ onClose, onAuthSuccess, apiUrl }) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="auth-form">
           {!isLogin && (
             <>
-              <div className="name-row">
+              <div className="form-row">
+                <div className="form-group">
+                  <label>First Name *</label>
+                  <input 
+                    type="text" 
+                    name="first_name" 
+                    placeholder="Enter first name" 
+                    value={formData.first_name}
+                    onChange={handleChange} 
+                    required 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Middle Name</label>
+                  <input 
+                    type="text" 
+                    name="middle_name" 
+                    placeholder="Optional" 
+                    value={formData.middle_name}
+                    onChange={handleChange} 
+                  />
+                </div>
+              </div>
+              
+              <div className="form-group">
+                <label>Last Name *</label>
                 <input 
                   type="text" 
-                  name="first_name" 
-                  placeholder="First Name *" 
-                  value={formData.first_name}
+                  name="last_name" 
+                  placeholder="Enter last name" 
+                  value={formData.last_name}
                   onChange={handleChange} 
                   required 
                 />
-                <input 
-                  type="text" 
-                  name="middle_name" 
-                  placeholder="Middle Name (Optional)" 
-                  value={formData.middle_name}
+              </div>
+              
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Mobile Number *</label>
+                  <input 
+                    type="tel" 
+                    name="mobile" 
+                    placeholder="09XXXXXXXXX" 
+                    value={formData.mobile}
+                    onChange={handleChange} 
+                    required 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Email *</label>
+                  <input 
+                    type="email" 
+                    name="email" 
+                    placeholder="you@example.com" 
+                    value={formData.email}
+                    onChange={handleChange} 
+                    required 
+                  />
+                </div>
+              </div>
+              
+              <div className="form-group">
+                <label>Complete Address *</label>
+                <textarea 
+                  name="address" 
+                  placeholder="House #, Street, Barangay, City, Province" 
+                  value={formData.address}
                   onChange={handleChange} 
+                  rows="2"
+                  required 
                 />
               </div>
-              <input 
-                type="text" 
-                name="last_name" 
-                placeholder="Last Name *" 
-                value={formData.last_name}
-                onChange={handleChange} 
-                required 
-              />
-              <input 
-                type="tel" 
-                name="mobile" 
-                placeholder="Mobile Number *" 
-                value={formData.mobile}
-                onChange={handleChange} 
-                required 
-              />
-              <textarea 
-                name="address" 
-                placeholder="Complete Address *" 
-                value={formData.address}
-                onChange={handleChange} 
-                required 
-              />
-              <input 
-                type="email" 
-                name="email" 
-                placeholder="Email Address *" 
-                value={formData.email}
-                onChange={handleChange} 
-                required 
-              />
             </>
           )}
           
-          <input 
-            type="text" 
-            name="username" 
-            placeholder="Username *" 
-            value={formData.username}
-            onChange={handleChange} 
-            required 
-          />
+          <div className="form-group">
+            <label>Username *</label>
+            <input 
+              type="text" 
+              name="username" 
+              placeholder="Choose a username" 
+              value={formData.username}
+              onChange={handleChange} 
+              required 
+            />
+          </div>
           
-          <input 
-            type="password" 
-            name="password" 
-            placeholder="Password *" 
-            value={formData.password}
-            onChange={handleChange} 
-            required 
-          />
-          
-          {!isLogin && (
-            <>
+          <div className="form-group">
+            <label>Password *</label>
+            <div className="password-input-wrapper">
               <input 
-                type="password" 
-                name="confirm_password" 
-                placeholder="Confirm Password *" 
-                value={formData.confirm_password}
+                type={showPassword ? "text" : "password"} 
+                name="password" 
+                placeholder="••••••••" 
+                value={formData.password}
                 onChange={handleChange} 
                 required 
               />
-              <select 
-                name="role" 
-                value={formData.role}
-                onChange={handleChange} 
-                className="auth-role-select"
+              <button 
+                type="button" 
+                className="password-toggle"
+                onClick={() => setShowPassword(!showPassword)}
               >
-                <option value="buyer">Sign up as Buyer</option>
-                <option value="seller">Sign up as Seller (Vendor)</option>
-              </select>
-              <p className="role-note">
-                {formData.role === 'seller' 
-                  ? 'Sellers can list and sell seafood products.' 
-                  : 'Buyers can purchase fresh seafood.'}
-              </p>
+                {showPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </div>
+          
+          {!isLogin && (
+            <>
+              <div className="form-group">
+                <label>Confirm Password *</label>
+                <div className="password-input-wrapper">
+                  <input 
+                    type={showConfirmPassword ? "text" : "password"} 
+                    name="confirm_password" 
+                    placeholder="••••••••" 
+                    value={formData.confirm_password}
+                    onChange={handleChange} 
+                    required 
+                  />
+                  <button 
+                    type="button" 
+                    className="password-toggle"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  >
+                    {showConfirmPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
+              </div>
+              
+              <div className="form-group">
+                <label>I want to</label>
+                <div className="role-buttons">
+                  <button 
+                    type="button"
+                    className={`role-btn ${formData.role === 'buyer' ? 'active' : ''}`}
+                    onClick={() => setFormData(prev => ({ ...prev, role: 'buyer' }))}
+                  >
+                    🛒 Buy Seafood
+                  </button>
+                  <button 
+                    type="button"
+                    className={`role-btn ${formData.role === 'seller' ? 'active' : ''}`}
+                    onClick={() => setFormData(prev => ({ ...prev, role: 'seller' }))}
+                  >
+                    📦 Sell Seafood
+                  </button>
+                </div>
+                <small className="role-note">
+                  {formData.role === 'seller' 
+                    ? 'Sellers can list and sell seafood products.' 
+                    : 'Buyers can purchase fresh seafood.'}
+                </small>
+              </div>
             </>
           )}
           
           {error && <div className="auth-error">{error}</div>}
           
-          <button type="submit" className="auth-submit" disabled={loading}>
+          <button type="submit" className="auth-submit-btn" disabled={loading}>
             {loading ? 'Processing...' : (isLogin ? 'Login' : 'Create Account')}
           </button>
         </form>
+        
+        <div className="auth-footer">
+          <p>
+            {isLogin ? "Don't have an account? " : "Already have an account? "}
+            <button 
+              type="button" 
+              className="auth-switch-btn"
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setError('');
+                setFormData(prev => ({ ...prev, password: '', confirm_password: '' }));
+              }}
+            >
+              {isLogin ? 'Sign Up' : 'Login'}
+            </button>
+          </p>
+        </div>
       </div>
     </div>
   );

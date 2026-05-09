@@ -21,7 +21,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [heroImageIndex, setHeroImageIndex] = useState(0);
   const [quantities, setQuantities] = useState({});
-  const [newProduct, setNewProduct] = useState({ name: '', price: '', stock: '', category: 'Fish', images: [] });
+  const [newProduct, setNewProduct] = useState({ name: '', price: '', stock: '', category: 'Fish', images: [],imageFiles: [],description: '' });
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -35,6 +35,7 @@ function App() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [searchOrder, setSearchOrder] = useState('');
   const [vendors, setVendors] = useState([]);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   // Helper function to get auth headers
  const getAuthHeaders = () => {
@@ -55,34 +56,67 @@ const fetchProducts = async () => {
     setLoading(true);
     const response = await fetch(`${API_URL}/products`);
     
-    console.log('Fetch products response status:', response.status);
-    
     if (response.ok) {
       const data = await response.json();
       console.log('Products data received:', data);
-      console.log('Number of products:', data.length);
       
-      // Format products to match frontend expectations
-      const formatted = data.map(p => ({
-        id: p.id,
-        vendor_id: p.vendor_id,
-        vendor: p.vendor_name || 'Unknown Vendor',
-        name: p.name,
-        price: p.price,
-        stock: p.stock_kg,
-        category: p.category,
-        images: p.images || ['https://via.placeholder.com/300x200?text=No+Image'],
-        description: p.description,
-        stars: 5,
-        ratingCount: 0,
-        is_available: p.is_available !== 0
-      }));
+      const formatted = data.map(p => {
+        // Fix: Add base URL to images
+        let images = [];
+        if (p.images && Array.isArray(p.images)) {
+          images = p.images.map(img => {
+            if (img.startsWith('/uploads/')) {
+              return `http://localhost:5000${img}`;
+            }
+            return img;
+          });
+        } else if (p.image_url) {
+          try {
+            const parsed = JSON.parse(p.image_url);
+            images = Array.isArray(parsed) ? parsed.map(img => 
+              img.startsWith('/uploads/') ? `http://localhost:5000${img}` : img
+            ) : [p.image_url];
+          } catch {
+            images = [p.image_url];
+          }
+        }
+        
+        if (images.length === 0) {
+          images = ['https://via.placeholder.com/300x200?text=No+Image'];
+        }
+        
+        // Calculate average rating from reviews
+        const productReviews = reviews.filter(r => Number(r.productId) === Number(p.id));
+        let averageRating = 5; // Default to 5 if no reviews
+        let ratingCount = 0;
+        
+        if (productReviews.length > 0) {
+          const sum = productReviews.reduce((acc, r) => acc + r.rating, 0);
+          averageRating = sum / productReviews.length;
+          ratingCount = productReviews.length;
+        } else if (p.average_rating && p.average_rating > 0) {
+          averageRating = parseFloat(p.average_rating);
+          ratingCount = p.rating_count || 0;
+        }
+        
+        return {
+          id: p.id,
+          vendor_id: p.vendor_id,
+          vendor: p.vendor_name || 'Unknown Vendor',
+          name: p.name,
+          price: p.price,
+          stock: p.stock_kg,
+          category: p.category,
+          images: images,
+          description: p.description,
+          stars: averageRating,
+          ratingCount: ratingCount,
+          is_available: p.is_available !== 0
+        };
+      });
       
-      console.log('Formatted products:', formatted);
+      console.log('Formatted products with ratings:', formatted);
       setProducts(formatted);
-    } else {
-      const errorText = await response.text();
-      console.error('Failed to fetch products:', errorText);
     }
   } catch (error) {
     console.error("Failed to fetch products:", error);
@@ -90,7 +124,6 @@ const fetchProducts = async () => {
     setLoading(false);
   }
 };
-
   // FETCH VENDORS
   const fetchVendors = async () => {
     try {
@@ -193,8 +226,7 @@ const fetchProducts = async () => {
     }
   };
 
- // FETCH USER ORDERS - UPDATED to match backend response
-const fetchOrders = async () => {
+ const fetchOrders = async () => {
   try {
     const token = localStorage.getItem('token');
     if (!token) return;
@@ -205,15 +237,15 @@ const fetchOrders = async () => {
     
     if (response.ok) {
       const data = await response.json();
-      console.log('Raw orders from backend:', data); // For debugging
+      console.log('Raw orders from backend:', data);
       
       // Format orders to match frontend expectations
       const formatted = data.map(order => ({
         id: order.id,
-        orderNumber: order.orderNumber,  // Backend sends orderNumber (camelCase)
-        buyerId: order.buyerId || order.buyer_name,
-        vendorId: order.vendorId || order.vendorName,
-        vendorName: order.vendorName,
+        orderNumber: order.orderNumber,
+        buyerId: order.buyerId,
+        vendorId: order.vendorId,
+        vendorName: order.vendorName,  // FIXED: Use vendorName from backend
         buyerName: order.buyerName,
         items: order.items || [],
         totalAmount: order.totalAmount,
@@ -239,8 +271,6 @@ const fetchOrders = async () => {
       
       setOrders(formatted);
       console.log('Formatted orders:', formatted);
-    } else {
-      console.error('Failed to fetch orders:', response.status);
     }
   } catch (error) {
     console.error("Error fetching orders:", error);
@@ -445,13 +475,28 @@ const fetchOrders = async () => {
     localStorage.setItem('fishconnect_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // Load cart from localStorage
-  useEffect(() => {
-    const savedCart = localStorage.getItem('fishconnect_cart');
-    if (savedCart) {
-      setCart(JSON.parse(savedCart));
+  // Refresh reviews when product modal opens
+useEffect(() => {
+  if (selectedProduct) {
+    fetchReviews();
+  }
+}, [selectedProduct]);
+
+// Refresh products when reviews are updated
+useEffect(() => {
+  fetchProducts();
+}, [reviews]);
+
+// Close profile dropdown when clicking outside
+useEffect(() => {
+  const handleClickOutside = (event) => {
+    if (showProfileMenu && !event.target.closest('.profile-dropdown')) {
+      setShowProfileMenu(false);
     }
-  }, []);
+  };
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => document.removeEventListener('mousedown', handleClickOutside);
+}, [showProfileMenu]);
 
   const categories = ['Fish', 'Shellfish', 'Crabs', 'Squid'];
   const vendorProducts = products.filter(p => p.vendor_id === currentUser?.id);
@@ -578,17 +623,45 @@ const addReview = async (orderId, productId, rating, comment) => {
   };
 
   const handleDeleteProduct = async (productId, e) => {
-    if (e) e.stopPropagation();
-    const confirmDelete = window.confirm("Are you sure you want to delete this product from the marketplace?");
-    if (confirmDelete) {
-      const success = await deleteProductFromDB(productId);
-      if (success) {
-        alert("Product deleted successfully!");
-      } else {
-        alert("Failed to delete product. Please try again.");
-      }
+  if (e) e.stopPropagation();
+  
+  console.log('🗑️ Attempting to delete product ID:', productId);
+  
+  const confirmDelete = window.confirm("Are you sure you want to delete this product?");
+  if (!confirmDelete) return;
+  
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('You must be logged in to delete products');
+      return;
     }
-  };
+    
+    const response = await fetch(`${API_URL}/products/${productId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const data = await response.json();
+    console.log('Delete response:', data);
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to delete product');
+    }
+    
+    alert('Product deleted successfully!');
+    
+    // Refresh the products list
+    await fetchProducts();
+    
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    alert(`Failed to delete product: ${error.message}`);
+  }
+};
 
   const calculateTotal = () => cart.reduce((total, item) => total + (item.price * item.quantity), 0);
 
@@ -803,33 +876,44 @@ const handleAddProduct = async (e) => {
     return <span style={{ backgroundColor: config.bg, color: config.color, padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>{config.text}</span>;
   };
 
-  const renderStars = (count) => {
-    const rating = Math.round(count) || 5;
-    return "★".repeat(rating) + "☆".repeat(5 - rating);
-  };
+  const renderStars = (rating) => {
+  const fullStars = Math.floor(rating);
+  const hasHalfStar = rating % 1 >= 0.5;
+  const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+  
+  return (
+    <span className="star-rating" style={{ color: '#ffc107', fontSize: '16px' }}>
+      {'★'.repeat(fullStars)}
+      {hasHalfStar && '½'}
+      {'☆'.repeat(emptyStars)}
+    </span>
+  );
+};
 
   const getReviewBreakdown = (product) => {
-    const total = product.ratingCount || 1;
-    const rating = product.stars || 5;
-
-    if (rating >= 4.5) {
-      return {
-        5: Math.round(total * 0.8),
-        4: Math.round(total * 0.15),
-        3: Math.round(total * 0.05),
-        2: 0,
-        1: 0
-      };
-    } else {
-      return {
-        5: Math.round(total * 0.15),
-        4: Math.round(total * 0.65),
-        3: Math.round(total * 0.15),
-        2: Math.round(total * 0.05),
-        1: 0
-      };
+  if (!product) return { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+  
+  // Get all reviews for this specific product
+  const productReviews = reviews.filter(r => Number(r.productId) === Number(product.id));
+  
+  console.log('Product ID:', product.id);
+  console.log('All reviews:', reviews);
+  console.log('Reviews for this product:', productReviews);
+  
+  // Initialize breakdown counts
+  const breakdown = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+  
+  // Count reviews by rating
+  productReviews.forEach(review => {
+    const rating = Math.floor(review.rating);
+    if (rating >= 1 && rating <= 5) {
+      breakdown[rating]++;
     }
-  };
+  });
+  
+  console.log('Breakdown:', breakdown);
+  return breakdown;
+};
 
   if (loading && products.length === 0) {
     return (
@@ -843,21 +927,51 @@ const handleAddProduct = async (e) => {
   return (
     <div className="app-container">
       <nav className="navbar">
-        <div className="brand" onClick={() => {setView('home'); setSearchQuery('');}}>🐟 FishConnect</div>
-        <div className="nav-links">
-          <button onClick={() => {setView('home'); setSearchQuery('');}}>Marketplace</button>
-          {currentUser?.role !== 'seller' && <button onClick={() => setView('cart')} className="cart-btn">Cart ({cart.length})</button>}
-          {currentUser?.role === 'buyer' && <button onClick={() => setView('wishlist')}>Wishlist ({wishlist.length})</button>}
-          {currentUser?.role === 'buyer' && <button onClick={() => setView('orders')}>My Orders</button>}
-          {currentUser?.role === 'seller' && <button onClick={() => setView('sellerDashboard')}>Vendor Dashboard</button>}
-          {currentUser?.role === 'seller' && <button onClick={() => setView('sellerOrders')}>Orders Management</button>}
-          {currentUser ? (
-            <button className="login-btn" onClick={handleLogout}>Logout ({currentUser.first_name || currentUser.name})</button>
-          ) : (
-            <button className="login-btn" onClick={() => setIsAuthOpen(true)}>Login / Sign Up</button>
-          )}
-        </div>
-      </nav>
+  <div className="brand" onClick={() => {setView('home'); setSearchQuery('');}}>🐟 FishConnect</div>
+  
+  <div className="nav-links">
+    {/* Marketplace - visible to everyone */}
+    <button onClick={() => {setView('home'); setSearchQuery('');}}>Marketplace</button>
+    
+    {/* BUYER VIEW */}
+    {currentUser?.role === 'buyer' && (
+      <>
+        <button onClick={() => setView('cart')}>Cart ({cart.length})</button>
+        <button onClick={() => setView('wishlist')}>Wishlist ({wishlist.length})</button>
+        <button onClick={() => setView('orders')}>My Orders</button>
+      </>
+    )}
+    
+    {/* SELLER VIEW */}
+    {currentUser?.role === 'seller' && (
+      <>
+        <button onClick={() => setView('sellerDashboard')}>Vendor Dashboard</button>
+        <button onClick={() => setView('sellerOrders')}>Order Management</button>
+      </>
+    )}
+    
+    {/* Profile Dropdown - visible when logged in */}
+    {currentUser ? (
+      <div className="profile-dropdown">
+        <button className="profile-btn" onClick={() => setShowProfileMenu(!showProfileMenu)}>
+          👤 {currentUser.first_name || currentUser.name}
+          <span className="dropdown-arrow">▼</span>
+        </button>
+        {showProfileMenu && (
+          <div className="dropdown-menu">
+            <button onClick={handleLogout} className="dropdown-item logout-item">
+              🚪 Logout
+            </button>
+          </div>
+        )}
+      </div>
+    ) : (
+      <button className="login-btn" onClick={() => setIsAuthOpen(true)}>
+        🔑 Login / Sign Up
+      </button>
+    )}
+  </div>
+</nav>
 
       <main className="main-content">
         
@@ -924,9 +1038,9 @@ const handleAddProduct = async (e) => {
                               <p className="vendor-name">{product.vendor}</p>
                               
                               <div className="product-stars">
-                                <span className="star-symbols">{renderStars(product.stars)}</span>
-                                <span className="review-count"> ({product.ratingCount || 0})</span>
-                              </div>
+  <span className="star-symbols">{renderStars(product.stars)}</span>
+  <span className="review-count"> ({product.ratingCount || 0} reviews)</span>
+</div>
 
                               <p className="price">₱{product.price} / kg</p>
                               <p className="stock" style={{color: isOutOfStock ? '#ae2012' : '#2a9d8f'}}>Stock: {product.stock} kg</p>
@@ -1066,25 +1180,41 @@ const handleAddProduct = async (e) => {
                 
                 <div className="modal-stars-container">
                   <div className="modal-stars">
-                    <span className="star-symbols">{renderStars(selectedProduct.stars)}</span>
-                    <span className="review-count"> {selectedProduct.stars.toFixed(1)} ({selectedProduct.ratingCount || 0} reviews)</span>
-                  </div>
+  <span className="star-symbols">{renderStars(selectedProduct.stars)}</span>
+  <span className="review-count"> 
+    ({reviews.filter(r => Number(r.productId) === Number(selectedProduct?.id)).length} reviews)
+  </span>
+</div>
 
                   <div className="ratings-breakdown">
-                    <h4>Review Breakdown</h4>
-                    {Object.entries(getReviewBreakdown(selectedProduct)).reverse().map(([rating, count]) => {
-                      const percentage = selectedProduct.ratingCount > 0 ? (count / selectedProduct.ratingCount) * 100 : 0;
-                      return (
-                        <div key={rating} className="breakdown-row">
-                          <span className="breakdown-label">{rating} ★</span>
-                          <div className="breakdown-bar-bg">
-                            <div className="breakdown-bar-fill" style={{ width: `${percentage}%` }}></div>
-                          </div>
-                          <span className="breakdown-count">{count}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+  <h4>Review Breakdown</h4>
+  {[5, 4, 3, 2, 1].map(rating => {
+    const breakdown = getReviewBreakdown(selectedProduct);
+    const count = breakdown[rating] || 0;
+    const productReviews = reviews.filter(r => Number(r.productId) === Number(selectedProduct?.id));
+    const total = productReviews.length;
+    const percentage = total > 0 ? (count / total) * 100 : 0;
+    
+    return (
+      <div key={rating} className="breakdown-row">
+        <span className="breakdown-label">{rating} ★</span>
+        <div className="breakdown-bar-bg">
+          <div 
+            className="breakdown-bar-fill" 
+            style={{ 
+              width: `${percentage}%`,
+              backgroundColor: rating === 5 ? '#4caf50' : 
+                              rating === 4 ? '#8bc34a' :
+                              rating === 3 ? '#ffc107' :
+                              rating === 2 ? '#ff9800' : '#f44336'
+            }}
+          ></div>
+        </div>
+        <span className="breakdown-count">{count}</span>
+      </div>
+    );
+  })}
+</div>
                 </div>
 
                 <div className="product-reviews">
@@ -1213,7 +1343,9 @@ const handleAddProduct = async (e) => {
                             Stock: {product.stock} kg
                           </p>
                         </div>
-                        <button className="vendor-delete-btn" onClick={(e) => handleDeleteProduct(product.id, e)}>✕ Delete</button>
+                        <button className="vendor-delete-btn" onClick={(e) => handleDeleteProduct(product.id, e)}>
+  ✕ Delete
+</button>
                       </div>
                     ))}
                   </div>
@@ -1322,162 +1454,167 @@ const handleAddProduct = async (e) => {
           </div>
         )}
 
-        {/* Orders View - Buyer */}
-        {view === 'orders' && (
-          <div className="cart-container">
-            <h2>My Orders</h2>
-            
-            <div className="order-filters">
-              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-                <option value="all">All Orders</option>
-                <option value="waiting_verification">Waiting Verification</option>
-                <option value="pending_confirmation">Pending Confirmation</option>
-                <option value="preparing">Preparing</option>
-                <option value="shipping">Shipping</option>
-                <option value="delivered">Delivered</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-              
-              <input
-                type="text"
-                placeholder="Search orders..."
-                value={searchOrder}
-                onChange={(e) => setSearchOrder(e.target.value)}
-                className="search-input"
-                style={{width: '250px'}}
-              />
+{/* Orders View - Buyer */}
+{view === 'orders' && (
+  <div className="cart-container">
+    <h2>My Orders</h2>
+    
+    <div className="order-filters">
+      <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+        <option value="all">All Orders</option>
+        <option value="waiting_verification">Waiting Verification</option>
+        <option value="pending_confirmation">Pending Confirmation</option>
+        <option value="preparing">Preparing</option>
+        <option value="shipping">Shipping</option>
+        <option value="delivered">Delivered</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+      
+      <input
+        type="text"
+        placeholder="Search orders..."
+        value={searchOrder}
+        onChange={(e) => setSearchOrder(e.target.value)}
+        className="search-input"
+        style={{width: '250px'}}
+      />
+    </div>
+    
+    {buyerOrders.length === 0 ? (
+      <div style={{padding: '40px 0', textAlign: 'center'}}>
+        <p style={{fontSize: '18px', color: '#666', marginBottom: '20px'}}>You haven't placed any orders yet.</p>
+        <button className="checkout-btn" style={{width: 'auto'}} onClick={() => setView('home')}>Start Shopping</button>
+      </div>
+    ) : (
+      <div>
+        {buyerOrders
+          .filter(order => filterStatus === 'all' || order.status === filterStatus)
+          .filter(order => order.orderNumber?.toLowerCase().includes(searchOrder.toLowerCase()) ||
+                           order.items?.some(item => item.name?.toLowerCase().includes(searchOrder.toLowerCase())))
+          .map(order => (
+          <div key={order.id} className="order-card" style={{border: '1px solid #ddd', borderRadius: '8px', marginBottom: '20px', padding: '20px', backgroundColor: '#fff'}}>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '15px', borderBottom: '1px solid #eee', paddingBottom: '10px'}}>
+              <div>
+                <h3 style={{margin: 0, color: '#2a9d8f'}}>Order #{order.orderNumber}</h3>
+                <p style={{margin: '5px 0 0', fontSize: '12px', color: '#666'}}>Placed on: {new Date(order.orderDate).toLocaleString()}</p>
+              </div>
+              {getOrderStatusBadge(order.status)}
             </div>
             
-            {buyerOrders.length === 0 ? (
-              <div style={{padding: '40px 0', textAlign: 'center'}}>
-                <p style={{fontSize: '18px', color: '#666', marginBottom: '20px'}}>You haven't placed any orders yet.</p>
-                <button className="checkout-btn" style={{width: 'auto'}} onClick={() => setView('home')}>Start Shopping</button>
+            {/* Order Details - SINGLE BLOCK */}
+            <div style={{marginBottom: '15px'}}>
+              <p><strong>Vendor:</strong> {order.vendorName || order.vendorId}</p>
+              <p><strong>Payment Method:</strong> {order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'GCash'}</p>
+              <p><strong>Total Amount:</strong> <span style={{color: '#ae2012', fontWeight: 'bold'}}>₱{order.totalAmount}</span></p>
+              <p><strong>Shipping Address:</strong> {order.shippingAddress}</p>
+            </div>
+
+            {/* GCash Receipt Display */}
+            {order.paymentMethod === 'gcash' && order.paymentProof && (
+              <div style={{ marginBottom: '15px', padding: '10px', background: '#f5f5f5', borderRadius: '8px' }}>
+                <h4 style={{ margin: '0 0 10px 0' }}>📱 GCash Payment Receipt:</h4>
+                <img 
+                  src={order.paymentProof.startsWith('http') ? order.paymentProof : `http://localhost:5000${order.paymentProof}`}
+                  alt="Payment Proof" 
+                  style={{ maxWidth: '200px', borderRadius: '8px', border: '1px solid #ddd', cursor: 'pointer' }}
+                  onClick={() => window.open(order.paymentProof.startsWith('http') ? order.paymentProof : `http://localhost:5000${order.paymentProof}`, '_blank')}
+                />
+                <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>Click image to view full size</p>
               </div>
-            ) : (
-              <div>
-                {buyerOrders
-                  .filter(order => filterStatus === 'all' || order.status === filterStatus)
-                  .filter(order => order.orderNumber?.toLowerCase().includes(searchOrder.toLowerCase()) ||
-                                   order.items?.some(item => item.name?.toLowerCase().includes(searchOrder.toLowerCase())))
-                  .map(order => (
-                  <div key={order.id} className="order-card" style={{border: '1px solid #ddd', borderRadius: '8px', marginBottom: '20px', padding: '20px', backgroundColor: '#fff'}}>
-                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '15px', borderBottom: '1px solid #eee', paddingBottom: '10px'}}>
-                      <div>
-                        <h3 style={{margin: 0, color: '#2a9d8f'}}>Order #{order.orderNumber}</h3>
-                        <p style={{margin: '5px 0 0', fontSize: '12px', color: '#666'}}>Placed on: {new Date(order.orderDate).toLocaleString()}</p>
-                      </div>
-                      {getOrderStatusBadge(order.status)}
-                    </div>
-                    
-                    <div style={{marginBottom: '15px'}}>
-                      <p><strong>Vendor:</strong> {order.vendorId}</p>
-                      <p><strong>Payment Method:</strong> {order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'GCash'}</p>
-                      <p><strong>Total Amount:</strong> <span style={{color: '#ae2012', fontWeight: 'bold'}}>₱{order.totalAmount}</span></p>
-                      <p><strong>Shipping Address:</strong> {order.shippingAddress}</p>
-                    </div>
-                    
-                    <div style={{marginBottom: '15px'}}>
-                      <h4 style={{margin: '0 0 10px 0'}}>Items:</h4>
-                      {order.items && order.items.map((item, idx) => (
-                        <div key={idx} style={{display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f0f0f0'}}>
-                          <span>{item.name} x {item.quantity_kg || item.quantity} kg</span>
-                          <span>₱{item.subtotal}</span>
+            )}
+            
+            {(order.status === 'waiting_verification' || order.status === 'pending_confirmation') && (
+              <button 
+                className="cancel-order-btn"
+                onClick={() => setShowCancelModal(order.id)}
+              >
+                Cancel Order
+              </button>
+            )}
+            
+            {order.status === 'delivered' && (
+              <div className="review-section">
+                <h4>Rate Your Order</h4>
+                {order.items && order.items.map((item, idx) => {
+                  const existingReview = reviews.find(r => r.orderId === order.id && r.productId === item.id);
+                  if (!existingReview) {
+                    return (
+                      <div key={idx} className="review-form">
+                        <p><strong>{item.name}</strong></p>
+                        <div className="rating-input">
+                          {[1,2,3,4,5].map(star => (
+                            <span 
+                              key={star}
+                              className="star-rating"
+                              style={{ cursor: 'pointer', fontSize: '24px' }}
+                              onClick={() => {
+                                const comment = prompt(`Rate ${item.name} (1-5 stars):\nLeave a comment about this product.`);
+                                if (comment && comment.trim()) {
+                                  addReview(order.id, item.id, star, comment);
+                                } else if (comment) {
+                                  addReview(order.id, item.id, star, "Great product!");
+                                }
+                              }}
+                            >
+                              ☆
+                            </span>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                    
-                    {(order.status === 'waiting_verification' || order.status === 'pending_confirmation') && (
-                      <button 
-                        className="cancel-order-btn"
-                        onClick={() => setShowCancelModal(order.id)}
-                      >
-                        Cancel Order
-                      </button>
-                    )}
-                    
-                    {order.status === 'delivered' && (
-                      <div className="review-section">
-                        <h4>Rate Your Order</h4>
-                        {order.items && order.items.map((item, idx) => {
-                          const existingReview = reviews.find(r => r.orderId === order.id && r.productId === item.id);
-                          if (!existingReview) {
-                            return (
-                              <div key={idx} className="review-form">
-                                <p><strong>{item.name}</strong></p>
-                                <div className="rating-input">
-                                  {[1,2,3,4,5].map(star => (
-                                    <span 
-                                      key={star}
-                                      className="star-rating"
-                                      onClick={() => {
-                                        const comment = prompt(`Rate ${item.name} (1-5 stars):\nLeave a comment about this product.`);
-                                        if (comment && comment.trim()) {
-                                          addReview(order.id, item.id, star, comment);
-                                        } else if (comment) {
-                                          addReview(order.id, item.id, star, "Great product!");
-                                        }
-                                      }}
-                                    >
-                                      ☆
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div key={idx} className="existing-review">
-                              <strong>{item.name}</strong> - {existingReview.rating}★ 
-                              <em> "{existingReview.comment}"</em>
-                            </div>
-                          );
-                        })}
                       </div>
-                    )}
-                    
-                    <div style={{marginBottom: '15px'}}>
-                      <h4 style={{margin: '0 0 10px 0'}}>Order Tracking:</h4>
-                      <div style={{borderLeft: '2px solid #2a9d8f', paddingLeft: '15px'}}>
-                        {order.tracking && order.tracking.history && order.tracking.history.map((track, idx) => (
-                          <div key={idx} style={{marginBottom: '10px'}}>
-                            <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                              <div style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: idx === order.tracking.history.length - 1 ? '#2a9d8f' : '#ccc'}}></div>
-                              <div>
-                                <strong style={{fontSize: '14px'}}>{track.description}</strong>
-                                <p style={{margin: '2px 0 0', fontSize: '12px', color: '#666'}}>{new Date(track.date).toLocaleString()}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                    );
+                  }
+                  return (
+                    <div key={idx} className="existing-review">
+                      <strong>{item.name}</strong> - {existingReview.rating}★ 
+                      <em> "{existingReview.comment}"</em>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            
+            <div style={{marginBottom: '15px'}}>
+              <h4 style={{margin: '0 0 10px 0'}}>Order Tracking:</h4>
+              <div style={{borderLeft: '2px solid #2a9d8f', paddingLeft: '15px'}}>
+                {order.tracking && order.tracking.history && order.tracking.history.map((track, idx) => (
+                  <div key={idx} style={{marginBottom: '10px'}}>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                      <div style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: idx === order.tracking.history.length - 1 ? '#2a9d8f' : '#ccc'}}></div>
+                      <div>
+                        <strong style={{fontSize: '14px'}}>{track.description}</strong>
+                        <p style={{margin: '2px 0 0', fontSize: '12px', color: '#666'}}>{new Date(track.date).toLocaleString()}</p>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-            
-            {showCancelModal && (
-              <div className="modal-overlay" onClick={() => setShowCancelModal(null)}>
-                <div className="confirm-modal" onClick={(e) => e.stopPropagation()}>
-                  <h3>Cancel Order</h3>
-                  <p>Please provide a reason for cancellation:</p>
-                  <textarea
-                    value={cancelReason}
-                    onChange={(e) => setCancelReason(e.target.value)}
-                    placeholder="e.g., Changed my mind, Found better price, etc."
-                    rows="3"
-                    style={{width: '100%', padding: '8px', marginBottom: '15px', borderRadius: '5px', border: '1px solid #ddd'}}
-                  />
-                  <div className="confirm-buttons">
-                    <button className="cancel-btn" onClick={() => setShowCancelModal(null)}>No, Keep Order</button>
-                    <button className="confirm-btn" onClick={() => cancelOrder(showCancelModal)}>Yes, Cancel Order</button>
-                  </div>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
-        )}
-
+        ))}
+      </div>
+    )}
+    
+    {showCancelModal && (
+      <div className="modal-overlay" onClick={() => setShowCancelModal(null)}>
+        <div className="confirm-modal" onClick={(e) => e.stopPropagation()}>
+          <h3>Cancel Order</h3>
+          <p>Please provide a reason for cancellation:</p>
+          <textarea
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder="e.g., Changed my mind, Found better price, etc."
+            rows="3"
+            style={{width: '100%', padding: '8px', marginBottom: '15px', borderRadius: '5px', border: '1px solid #ddd'}}
+          />
+          <div className="confirm-buttons">
+            <button className="cancel-btn" onClick={() => setShowCancelModal(null)}>No, Keep Order</button>
+            <button className="confirm-btn" onClick={() => cancelOrder(showCancelModal)}>Yes, Cancel Order</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+)}
         {/* Seller Orders Management */}
         {view === 'sellerOrders' && currentUser?.role === 'seller' && (
           <div className="cart-container">
@@ -1499,7 +1636,8 @@ const handleAddProduct = async (e) => {
                     </div>
                     
                     <div style={{marginBottom: '15px'}}>
-                      <p><strong>Buyer:</strong> {order.buyerId}</p>
+                      <p><strong>Buyer:</strong> {order.buyerName || order.buyerId}</p>
+                      <p><strong>Vendor:</strong> {order.vendorName || order.vendorId}</p>
                       <p><strong>Payment Method:</strong> {order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'GCash'}</p>
                       <p><strong>Total Amount:</strong> <span style={{color: '#ae2012', fontWeight: 'bold'}}>₱{order.totalAmount}</span></p>
                       <p><strong>Recipient:</strong> {order.recipientName}</p>
@@ -1507,6 +1645,40 @@ const handleAddProduct = async (e) => {
                       <p><strong>Shipping Address:</strong> {order.shippingAddress}</p>
                     </div>
                     
+                    {/* GCash Receipt Display for Seller */}
+{order.paymentMethod === 'gcash' && order.paymentProof && (
+  <div style={{ marginBottom: '15px' }}>
+    <h4 style={{ margin: '0 0 10px 0' }}>📱 GCash Payment Receipt (from buyer):</h4>
+    <img 
+      src={order.paymentProof.startsWith('http') ? order.paymentProof : `http://localhost:5000${order.paymentProof}`}
+      alt="Payment Proof" 
+      style={{ 
+        maxWidth: '200px', 
+        borderRadius: '8px', 
+        border: '1px solid #ddd',
+        cursor: 'pointer'
+      }}
+      onClick={() => window.open(
+        order.paymentProof.startsWith('http') ? order.paymentProof : `http://localhost:5000/${order.paymentProof}`, 
+        '_blank'
+      )}
+    />
+    
+    {/* Confirm Payment Button - only show if order is waiting_verification */}
+    {order.status === 'waiting_verification' && (
+      <div style={{ marginTop: '10px' }}>
+        <button 
+          className="checkout-btn" 
+          onClick={() => handleConfirmPayment(order.id)} 
+          style={{ width: 'auto', padding: '8px 20px' }}
+        >
+          ✓ Confirm Payment
+        </button>
+      </div>
+    )}
+  </div>
+)}
+
                     {order.paymentMethod === 'gcash' && order.status === 'waiting_verification' && (
                       <div style={{marginBottom: '15px'}}>
                         <h4>Payment Proof:</h4>
