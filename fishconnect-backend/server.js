@@ -297,7 +297,7 @@ app.post('/api/products', authenticateToken, upload.array('images', 5), async (r
   }
 });
 
-// UPLOAD PAYMENT PROOF - ADD THIS ENDPOINT
+// ========== UPLOAD PAYMENT PROOF ENDPOINT ==========
 app.post('/api/upload-payment-proof', authenticateToken, upload.single('payment_proof'), async (req, res) => {
   console.log('💰 Payment proof upload received');
   console.log('File:', req.file);
@@ -312,6 +312,7 @@ app.post('/api/upload-payment-proof', authenticateToken, upload.single('payment_
 });
 
 // ========== ORDER ROUTES ==========
+// Create order - Updated to save payment_proof
 app.post('/api/orders', authenticateToken, async (req, res) => {
   console.log('Order creation request:', req.body);
   
@@ -321,6 +322,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
   await connection.beginTransaction();
   
   try {
+    // Get vendor_id from the first product's vendor
     const [productInfo] = await connection.query(
       'SELECT vendor_id FROM products WHERE id = ?',
       [items[0].product_id]
@@ -332,41 +334,41 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     
     const vendor_id = productInfo[0].vendor_id;
     const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const orderStatus = payment_method === 'gcash' ? 'waiting_verification' : 'pending_confirmation';
     
+    // Create order with payment_proof
     const [orderResult] = await connection.query(
       `INSERT INTO orders (order_number, buyer_id, vendor_id, recipient_name, mobile_number, shipping_address, 
        total_amount, payment_method, payment_proof, status, order_date) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [orderNumber, req.user.id, vendor_id, recipient_name, mobile_number, shipping_address, total_amount, payment_method, payment_proof || null, orderStatus]
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_confirmation', NOW())`,
+      [orderNumber, req.user.id, vendor_id, recipient_name, mobile_number, shipping_address, total_amount, payment_method, payment_proof || null]
     );
     
     const orderId = orderResult.insertId;
     
+    // Add order items and update stock
     for (const item of items) {
       await connection.query(
         'INSERT INTO order_items (order_id, product_id, quantity_kg, subtotal) VALUES (?, ?, ?, ?)',
         [orderId, item.product_id, item.quantity_kg, item.subtotal]
       );
       
+      // Update product stock
       await connection.query(
         'UPDATE products SET stock_kg = stock_kg - ? WHERE id = ?',
         [item.quantity_kg, item.product_id]
       );
     }
     
-    const trackingDesc = payment_method === 'gcash' 
-      ? 'Order placed. Waiting for payment verification.' 
-      : 'Order placed. Waiting for vendor confirmation.';
-    
+    // Add tracking history
     await connection.query(
       `INSERT INTO order_tracking (order_id, description, status_reached, update_date) 
-       VALUES (?, ?, ?, NOW())`,
-      [orderId, trackingDesc, orderStatus]
+       VALUES (?, ?, 'pending_confirmation', NOW())`,
+      [orderId, 'Order placed. Waiting for vendor confirmation.']
     );
     
     await connection.commit();
-    res.json({ id: orderId, order_number: orderNumber, message: 'Order created successfully' });
+    console.log('Order created successfully, ID:', orderId, 'Payment proof:', payment_proof);
+    res.json({ id: orderId, order_number: orderNumber, message: 'Order created successfully', payment_proof: payment_proof });
     
   } catch (error) {
     await connection.rollback();
